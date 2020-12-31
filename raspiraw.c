@@ -1483,7 +1483,7 @@ fprintf(stderr,"end\n");
 			goto pool_destroy;
 		}
 	}
-
+// TODO: Add trigger wait loop here!
 	start_camera_streaming(sensor, sensor_mode);
 
 	vcos_sleep(cfg.timeout);
