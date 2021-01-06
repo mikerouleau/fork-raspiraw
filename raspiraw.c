@@ -1495,7 +1495,7 @@ int main(int argc, char **argv)
 
 	//Wait for trigger
 	wiringPiSetup();
-	pinMode(TRIGGERPIN, INPUT); // TODO: make input
+	pinMode(TRIGGER_PIN, INPUT); // TODO: make input
 	printf("Waiting for trigger on GPIO %d", TRIGGER_PIN);
 
 	while (digitalRead(TRIGGER_PIN) != HIGH)
