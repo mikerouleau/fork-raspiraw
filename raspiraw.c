@@ -56,14 +56,20 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "raw_header.h"
 
+//For Trigger
+#include <wiringPi.h>
+
 #define DEFAULT_I2C_DEVICE 0
 
-#define I2C_DEVICE_NAME_LEN 13	// "/dev/i2c-XXX"+NULL
+#define I2C_DEVICE_NAME_LEN 13 // "/dev/i2c-XXX"+NULL
 static char i2c_device_name[I2C_DEVICE_NAME_LEN];
+
+#define TRIGGER_PIN 2
 
 struct brcm_raw_header *brcm_header = NULL;
 
-enum bayer_order {
+enum bayer_order
+{
 	//Carefully ordered so that an hflip is ^1,
 	//and a vflip is ^2.
 	BAYER_ORDER_BGGR,
@@ -72,7 +78,8 @@ enum bayer_order {
 	BAYER_ORDER_RGGB
 };
 
-struct sensor_regs {
+struct sensor_regs
+{
 	uint16_t reg;
 	uint16_t data;
 };
@@ -108,23 +115,23 @@ struct sensor_def
 	struct sensor_regs *stop;
 	int num_stop_regs;
 
-	uint8_t i2c_addr;		// Device I2C slave address
-	int i2c_addressing;		// Length of register address values
-	int i2c_data_size;		// Length of register data to write
+	uint8_t i2c_addr;	// Device I2C slave address
+	int i2c_addressing; // Length of register address values
+	int i2c_data_size;	// Length of register data to write
 
 	//  Detecting the device
-	int i2c_ident_length;		// Length of I2C ID register
-	uint16_t i2c_ident_reg;		// ID register address
-	uint16_t i2c_ident_value;	// ID register value
+	int i2c_ident_length;	  // Length of I2C ID register
+	uint16_t i2c_ident_reg;	  // ID register address
+	uint16_t i2c_ident_value; // ID register value
 
 	// Flip configuration
-	uint16_t vflip_reg;		// Register for VFlip
-	int vflip_reg_bit;		// Bit in that register for VFlip
-	uint16_t hflip_reg;		// Register for HFlip
-	int hflip_reg_bit;		// Bit in that register for HFlip
-	int flips_dont_change_bayer_order;	// Some sensors do not change the
-						// Bayer order by adjusting X/Y starts
-						// to compensate.
+	uint16_t vflip_reg;				   // Register for VFlip
+	int vflip_reg_bit;				   // Bit in that register for VFlip
+	uint16_t hflip_reg;				   // Register for HFlip
+	int hflip_reg_bit;				   // Bit in that register for HFlip
+	int flips_dont_change_bayer_order; // Some sensors do not change the
+									   // Bayer order by adjusting X/Y starts
+									   // to compensate.
 
 	uint16_t exposure_reg;
 	int exposure_reg_num_bits;
@@ -142,8 +149,7 @@ struct sensor_def
 	int yos_reg_num_bits;
 };
 
-
-#define NUM_ELEMENTS(a)  (sizeof(a) / sizeof(a[0]))
+#define NUM_ELEMENTS(a) (sizeof(a) / sizeof(a[0]))
 
 #include "ov5647_modes.h"
 #include "imx219_modes.h"
@@ -153,10 +159,10 @@ const struct sensor_def *sensors[] = {
 	&ov5647,
 	&imx219,
 	&adv7282,
-	NULL
-};
+	NULL};
 
-enum {
+enum
+{
 	CommandHelp,
 	CommandMode,
 	CommandHFlip,
@@ -192,48 +198,50 @@ enum {
 };
 
 static COMMAND_LIST cmdline_commands[] =
-{
-	{ CommandHelp,		"-help",	"?",  "This help information", 0 },
-	{ CommandMode,		"-mode",	"md", "Set sensor mode <mode>", 1 },
-	{ CommandHFlip,		"-hflip",	"hf", "Set horizontal flip", 0},
-	{ CommandVFlip,		"-vflip",	"vf", "Set vertical flip", 0},
-	{ CommandExposure,	"-ss",		"e",  "Set the sensor exposure time (not calibrated units)", 0 },
-	{ CommandGain,		"-gain",	"g",  "Set the sensor gain code (not calibrated units)", 0 },
-	{ CommandOutput,	"-output",	"o",  "Set the output filename", 0 },
-	{ CommandWriteHeader,	"-header",	"hd", "Write the BRCM header to the output file", 0 },
-	{ CommandTimeout,	"-timeout",	"t",  "Time (in ms) before shutting down (if not specified, set to 5s)", 1 },
-	{ CommandSaveRate, 	"-saverate",	"sr", "Save every Nth frame", 1 },
-	{ CommandBitDepth, 	"-bitdepth",	"b",  "Set output raw bit depth (8, 10, 12 or 16, if not specified, set to sensor native)", 1 },
-	{ CommandCameraNum, 	"-cameranum",	"c",  "Set camera number to use (0=CAM0, 1=CAM1).", 1 },
-	{ CommandExposureus, 	"-expus",	"eus",  "Set the sensor exposure time in micro seconds.", -1 },
-	{ CommandI2cBus, 	"-i2c",	        "y",  "Set the I2C bus to use.", -1 },
-	{ CommandAwbGains, 	"-awbgains",	"awbg", "Set the AWB gains to use.", 1 },
-	{ CommandRegs,	 	"-regs",	"r",  "Change (current mode) regs", 0 },
-	{ CommandHinc,		"-hinc",	"hi", "Set horizontal odd/even inc reg", -1},
-	{ CommandVinc,		"-vinc",	"vi", "Set vertical odd/even inc reg", -1},   // ov5647
-	{ CommandVoinc,		"-voinc",	"voi","Set vertical odd inc reg", -1},        // imx219
-	{ CommandHoinc,		"-hoinc",	"hoi","Set horizontal odd inc reg", -1},      // imx219
-	{ CommandBin44,		"-bin44",	"b44","Set 4x4 binning", -1},      // imx219
-	{ CommandFps,		"-fps",		"f",  "Set framerate regs", -1},
-	{ CommandWidth,		"-width",	"w",  "Set current mode width", -1},
-	{ CommandHeight,	"-height",	"h",  "Set current mode height", -1},
-	{ CommandLeft,		"-left",	"lt", "Set current mode left", -1},
-	{ CommandTop,		"-top",		"tp", "Set current mode top", -1},
-	{ CommandWriteHeader0,	"-header0",	"hd0","Sets filename to write the BRCM header to", 0 },
-	{ CommandWriteHeaderG,	"-headerg",	"hdg","Sets filename to write the .pgm header to", 0 },
-	{ CommandWriteTimestamps,"-tstamps",	"ts", "Sets filename to write timestamps to", 0 },
-	{ CommandWriteEmpty,	"-empty",	"emp","Write empty output files", 0 },
+	{
+		{CommandHelp, "-help", "?", "This help information", 0},
+		{CommandMode, "-mode", "md", "Set sensor mode <mode>", 1},
+		{CommandHFlip, "-hflip", "hf", "Set horizontal flip", 0},
+		{CommandVFlip, "-vflip", "vf", "Set vertical flip", 0},
+		{CommandExposure, "-ss", "e", "Set the sensor exposure time (not calibrated units)", 0},
+		{CommandGain, "-gain", "g", "Set the sensor gain code (not calibrated units)", 0},
+		{CommandOutput, "-output", "o", "Set the output filename", 0},
+		{CommandWriteHeader, "-header", "hd", "Write the BRCM header to the output file", 0},
+		{CommandTimeout, "-timeout", "t", "Time (in ms) before shutting down (if not specified, set to 5s)", 1},
+		{CommandSaveRate, "-saverate", "sr", "Save every Nth frame", 1},
+		{CommandBitDepth, "-bitdepth", "b", "Set output raw bit depth (8, 10, 12 or 16, if not specified, set to sensor native)", 1},
+		{CommandCameraNum, "-cameranum", "c", "Set camera number to use (0=CAM0, 1=CAM1).", 1},
+		{CommandExposureus, "-expus", "eus", "Set the sensor exposure time in micro seconds.", -1},
+		{CommandI2cBus, "-i2c", "y", "Set the I2C bus to use.", -1},
+		{CommandAwbGains, "-awbgains", "awbg", "Set the AWB gains to use.", 1},
+		{CommandRegs, "-regs", "r", "Change (current mode) regs", 0},
+		{CommandHinc, "-hinc", "hi", "Set horizontal odd/even inc reg", -1},
+		{CommandVinc, "-vinc", "vi", "Set vertical odd/even inc reg", -1}, // ov5647
+		{CommandVoinc, "-voinc", "voi", "Set vertical odd inc reg", -1},   // imx219
+		{CommandHoinc, "-hoinc", "hoi", "Set horizontal odd inc reg", -1}, // imx219
+		{CommandBin44, "-bin44", "b44", "Set 4x4 binning", -1},			   // imx219
+		{CommandFps, "-fps", "f", "Set framerate regs", -1},
+		{CommandWidth, "-width", "w", "Set current mode width", -1},
+		{CommandHeight, "-height", "h", "Set current mode height", -1},
+		{CommandLeft, "-left", "lt", "Set current mode left", -1},
+		{CommandTop, "-top", "tp", "Set current mode top", -1},
+		{CommandWriteHeader0, "-header0", "hd0", "Sets filename to write the BRCM header to", 0},
+		{CommandWriteHeaderG, "-headerg", "hdg", "Sets filename to write the .pgm header to", 0},
+		{CommandWriteTimestamps, "-tstamps", "ts", "Sets filename to write timestamps to", 0},
+		{CommandWriteEmpty, "-empty", "emp", "Write empty output files", 0},
 };
 
 static int cmdline_commands_size = sizeof(cmdline_commands) / sizeof(cmdline_commands[0]);
 
-typedef struct pts_node {
-	int	idx;
-	int64_t  pts;
+typedef struct pts_node
+{
+	int idx;
+	int64_t pts;
 	struct pts_node *nxt;
-} *PTS_NODE_T;
+} * PTS_NODE_T;
 
-typedef struct {
+typedef struct
+{
 	int mode;
 	int hflip;
 	int vflip;
@@ -265,8 +273,8 @@ typedef struct {
 	char *write_headerg;
 	char *write_timestamps;
 	int write_empty;
-        PTS_NODE_T ptsa;
-        PTS_NODE_T ptso;
+	PTS_NODE_T ptsa;
+	PTS_NODE_T ptso;
 } RASPIRAW_PARAMS_T;
 
 void update_regs(const struct sensor_def *sensor, struct mode_def *mode, int hflip, int vflip, int exposure, int gain);
@@ -274,14 +282,14 @@ void update_regs(const struct sensor_def *sensor, struct mode_def *mode, int hfl
 static int i2c_rd(int fd, uint8_t i2c_addr, uint16_t reg, uint8_t *values, uint32_t n, const struct sensor_def *sensor)
 {
 	int err;
-	uint8_t buf[2] = { reg >> 8, reg & 0xff };
+	uint8_t buf[2] = {reg >> 8, reg & 0xff};
 	struct i2c_rdwr_ioctl_data msgset;
 	struct i2c_msg msgs[2] = {
 		{
-			 .addr = i2c_addr,
-			 .flags = 0,
-			 .len = 2,
-			 .buf = buf,
+			.addr = i2c_addr,
+			.flags = 0,
+			.len = 2,
+			.buf = buf,
 		},
 		{
 			.addr = i2c_addr,
@@ -306,7 +314,7 @@ static int i2c_rd(int fd, uint8_t i2c_addr, uint16_t reg, uint8_t *values, uint3
 	return 0;
 }
 
-const struct sensor_def * probe_sensor(void)
+const struct sensor_def *probe_sensor(void)
 {
 	int fd;
 	const struct sensor_def **sensor_list = &sensors[0];
@@ -319,14 +327,14 @@ const struct sensor_def * probe_sensor(void)
 		return NULL;
 	}
 
-	while(*sensor_list != NULL)
+	while (*sensor_list != NULL)
 	{
 		uint16_t reg = 0;
 		sensor = *sensor_list;
 		vcos_log_error("Probing sensor %s on addr %02X", sensor->name, sensor->i2c_addr);
 		if (sensor->i2c_ident_length <= 2)
 		{
-			if (!i2c_rd(fd, sensor->i2c_addr, sensor->i2c_ident_reg, (uint8_t*)&reg, sensor->i2c_ident_length, sensor))
+			if (!i2c_rd(fd, sensor->i2c_addr, sensor->i2c_ident_reg, (uint8_t *)&reg, sensor->i2c_ident_length, sensor))
 			{
 				if (reg == sensor->i2c_ident_value)
 				{
@@ -344,7 +352,7 @@ const struct sensor_def * probe_sensor(void)
 void send_regs(int fd, const struct sensor_def *sensor, const struct sensor_regs *regs, int num_regs)
 {
 	int i;
-	for (i=0; i<num_regs; i++)
+	for (i = 0; i < num_regs; i++)
 	{
 		if (regs[i].reg == 0xFFFF)
 		{
@@ -361,12 +369,12 @@ void send_regs(int fd, const struct sensor_def *sensor, const struct sensor_regs
 		{
 			if (sensor->i2c_addressing == 1)
 			{
-				unsigned char msg[3] = {regs[i].reg, regs[i].data & 0xFF };
+				unsigned char msg[3] = {regs[i].reg, regs[i].data & 0xFF};
 				int len = 2;
 
 				if (sensor->i2c_data_size == 2)
 				{
-					msg[1] = (regs[i].data>>8) & 0xFF;
+					msg[1] = (regs[i].data >> 8) & 0xFF;
 					msg[2] = regs[i].data & 0xFF;
 					len = 3;
 				}
@@ -377,7 +385,7 @@ void send_regs(int fd, const struct sensor_def *sensor, const struct sensor_regs
 			}
 			else
 			{
-				unsigned char msg[4] = {regs[i].reg>>8, regs[i].reg, regs[i].data};
+				unsigned char msg[4] = {regs[i].reg >> 8, regs[i].reg, regs[i].data};
 				int len = 3;
 
 				if (sensor->i2c_data_size == 2)
@@ -445,12 +453,12 @@ void stop_camera_streaming(const struct sensor_def *sensor)
  * @return Returns a MMAL_STATUS_T giving result of operation
 */
 
-MMAL_STATUS_T create_filenames(char** finalName, char * pattern, int frame)
+MMAL_STATUS_T create_filenames(char **finalName, char *pattern, int frame)
 {
 	*finalName = NULL;
 	if (0 > asprintf(finalName, pattern, frame))
 	{
-		return MMAL_ENOMEM;    // It may be some other error, but it is not worth getting it right
+		return MMAL_ENOMEM; // It may be some other error, but it is not worth getting it right
 	}
 	return MMAL_SUCCESS;
 }
@@ -464,8 +472,8 @@ static void callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer)
 	{
 		RASPIRAW_PARAMS_T *cfg = (RASPIRAW_PARAMS_T *)port->userdata;
 
-		if (!(buffer->flags&MMAL_BUFFER_HEADER_FLAG_CODECSIDEINFO) &&
-                    (((count++)%cfg->saverate)==0))
+		if (!(buffer->flags & MMAL_BUFFER_HEADER_FLAG_CODECSIDEINFO) &&
+			(((count++) % cfg->saverate) == 0))
 		{
 			// Save every Nth frame
 			// SD card access is too slow to do much more.
@@ -476,7 +484,7 @@ static void callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer)
 				file = fopen(filename, "wb");
 				if (file)
 				{
-					if (cfg->ptso)  // make sure previous malloc() was successful
+					if (cfg->ptso) // make sure previous malloc() was successful
 					{
 						cfg->ptso->idx = count;
 						cfg->ptso->pts = buffer->pts;
@@ -511,14 +519,12 @@ uint32_t order_and_bit_depth_to_encoding(enum bayer_order order, int bit_depth)
 		MMAL_ENCODING_BAYER_SBGGR8,
 		MMAL_ENCODING_BAYER_SGBRG8,
 		MMAL_ENCODING_BAYER_SGRBG8,
-		MMAL_ENCODING_BAYER_SRGGB8
-	};
+		MMAL_ENCODING_BAYER_SRGGB8};
 	const uint32_t depth10[] = {
 		MMAL_ENCODING_BAYER_SBGGR10P,
 		MMAL_ENCODING_BAYER_SGBRG10P,
 		MMAL_ENCODING_BAYER_SGRBG10P,
-		MMAL_ENCODING_BAYER_SRGGB10P
-	};
+		MMAL_ENCODING_BAYER_SRGGB10P};
 	const uint32_t depth12[] = {
 		MMAL_ENCODING_BAYER_SBGGR12P,
 		MMAL_ENCODING_BAYER_SGBRG12P,
@@ -537,16 +543,16 @@ uint32_t order_and_bit_depth_to_encoding(enum bayer_order order, int bit_depth)
 		return 0;
 	}
 
-	switch(bit_depth)
+	switch (bit_depth)
 	{
-		case 8:
-			return depth8[order];
-		case 10:
-			return depth10[order];
-		case 12:
-			return depth12[order];
-		case 16:
-			return depth16[order];
+	case 8:
+		return depth8[order];
+	case 10:
+		return depth10[order];
+	case 12:
+		return depth12[order];
+	case 16:
+		return depth16[order];
 	}
 	vcos_log_error("%d not one of the handled bit depths", bit_depth);
 	return 0;
@@ -587,59 +593,59 @@ static int parse_cmdline(int argc, char **argv, RASPIRAW_PARAMS_T *cfg)
 		command_id = raspicli_get_command_id(cmdline_commands, cmdline_commands_size, &argv[i][1], &num_parameters);
 
 		// If we found a command but are missing a parameter, continue (and we will drop out of the loop)
-		if (command_id != -1 && num_parameters > 0 && (i + 1 >= argc) )
+		if (command_id != -1 && num_parameters > 0 && (i + 1 >= argc))
 			continue;
 
 		//  We are now dealing with a command line option
 		switch (command_id)
 		{
-			case CommandHelp:
-				raspicli_display_help(cmdline_commands, cmdline_commands_size);
-				// exit straight away if help requested
-				return -1;
+		case CommandHelp:
+			raspicli_display_help(cmdline_commands, cmdline_commands_size);
+			// exit straight away if help requested
+			return -1;
 
-			case CommandMode:
-				if (sscanf(argv[i + 1], "%d", &cfg->mode) != 1)
-					valid = 0;
-				else
-					i++;
-				break;
+		case CommandMode:
+			if (sscanf(argv[i + 1], "%d", &cfg->mode) != 1)
+				valid = 0;
+			else
+				i++;
+			break;
 
-			case CommandHFlip:
-				cfg->hflip = 1;
-				break;
+		case CommandHFlip:
+			cfg->hflip = 1;
+			break;
 
-			case CommandVFlip:
-				cfg->vflip = 1;
-				break;
+		case CommandVFlip:
+			cfg->vflip = 1;
+			break;
 
-			case CommandExposure:
-				if (sscanf(argv[i + 1], "%d", &cfg->exposure) != 1)
-					valid = 0;
-				else
-					i++;
-				break;
+		case CommandExposure:
+			if (sscanf(argv[i + 1], "%d", &cfg->exposure) != 1)
+				valid = 0;
+			else
+				i++;
+			break;
 
-			case CommandGain:
-				if (sscanf(argv[i + 1], "%d", &cfg->gain) != 1)
-					valid = 0;
-				else
-					i++;
-				break;
+		case CommandGain:
+			if (sscanf(argv[i + 1], "%d", &cfg->gain) != 1)
+				valid = 0;
+			else
+				i++;
+			break;
 
-			case CommandOutput:  // output filename
+		case CommandOutput: // output filename
+		{
+			len = strlen(argv[i + 1]);
+			if (len)
 			{
-				len = strlen(argv[i + 1]);
-				if (len)
+				//We use sprintf to append the frame number for timelapse mode
+				//Ensure that any %<char> is either %% or %d.
+				const char *percent = argv[i + 1];
+				while (valid && *percent && (percent = strchr(percent, '%')) != NULL)
 				{
-					//We use sprintf to append the frame number for timelapse mode
-					//Ensure that any %<char> is either %% or %d.
-					const char *percent = argv[i+1];
-					while(valid && *percent && (percent=strchr(percent, '%')) != NULL)
-					{
-					int digits=0;
+					int digits = 0;
 					percent++;
-					while(isdigit(*percent))
+					while (isdigit(*percent))
 					{
 						percent++;
 						digits++;
@@ -654,212 +660,213 @@ static int parse_cmdline(int argc, char **argv, RASPIRAW_PARAMS_T *cfg)
 				cfg->output = malloc(len + 10); // leave enough space for any timelapse generated changes to filename
 				vcos_assert(cfg->output);
 				if (cfg->output)
-					strncpy(cfg->output, argv[i + 1], len+1);
-					i++;
-					cfg->capture = 1;
-				}
-				else
-					valid = 0;
-				break;
+					strncpy(cfg->output, argv[i + 1], len + 1);
+				i++;
+				cfg->capture = 1;
 			}
-
-			case CommandWriteHeader:
-				cfg->write_header = 1;
-				break;
-
-			case CommandTimeout: // Time to run for in milliseconds
-				if (sscanf(argv[i + 1], "%u", &cfg->timeout) == 1)
-				{
-					i++;
-				}
-				else
-					valid = 0;
-				break;
-
-			case CommandSaveRate:
-				if (sscanf(argv[i + 1], "%u", &cfg->saverate) == 1)
-				{
-					i++;
-				}
-				else
-					valid = 0;
-				break;
-
-			case CommandBitDepth:
-				if (sscanf(argv[i + 1], "%u", &cfg->bit_depth) == 1)
-				{
-					i++;
-				}
-				else
-					valid = 0;
-				break;
-
-			case CommandCameraNum:
-				if (sscanf(argv[i + 1], "%u", &cfg->camera_num) == 1)
-				{
-					i++;
-					if (cfg->camera_num !=0 && cfg->camera_num != 1)
-					{
-						fprintf(stderr, "Invalid camera number specified (%d)."
-							" It should be 0 or 1.\n", cfg->camera_num);
-						valid = 0;
-					}
-				}
-				else
-					valid = 0;
-				break;
-
-			case CommandExposureus:
-				if (sscanf(argv[i + 1], "%d", &cfg->exposure_us) != 1)
-					valid = 0;
-				else
-					i++;
-				break;
-
-			case CommandI2cBus:
-				if (sscanf(argv[i + 1], "%d", &cfg->i2c_bus) != 1)
-					valid = 0;
-				else
-					i++;
-				break;
-
-			case CommandAwbGains:
-			{
-				double r,b;
-				int args;
-
-				args = sscanf(argv[i + 1], "%lf,%lf", &r,&b);
-
-				if (args != 2 || r > 8.0 || b > 8.0)
-					valid = 0;
-
-				cfg->awb_gains_r = r;
-				cfg->awb_gains_b = b;
-
-				i++;
-				break;
-			}
-
-			case CommandRegs:  // register changes
-			{
-				len = strlen(argv[i + 1]);
-				cfg->regs = malloc(len+1);
-				vcos_assert(cfg->regs);
-				strncpy(cfg->regs, argv[i + 1], len+1);
-				i++;
-				break;
-			}
-
-			case CommandHinc:
-				if (strlen(argv[i+1]) != 2 ||
-                                    sscanf(argv[i + 1], "%x", &cfg->hinc) != 1)
-					valid = 0;
-				else
-					i++;
-				break;
-
-			case CommandVinc:
-				if (strlen(argv[i+1]) != 2 ||
-                                    sscanf(argv[i + 1], "%x", &cfg->vinc) != 1)
-					valid = 0;
-				else
-					i++;
-				break;
-
-			case CommandVoinc:
-				if (strlen(argv[i+1]) != 2 ||
-                                    sscanf(argv[i + 1], "%x", &cfg->voinc) != 1)
-					valid = 0;
-				else
-					i++;
-				break;
-
-			case CommandHoinc:
-				if (strlen(argv[i+1]) != 2 ||
-                                    sscanf(argv[i + 1], "%x", &cfg->hoinc) != 1)
-					valid = 0;
-				else
-					i++;
-				break;
-
-			case CommandBin44:
-                                cfg->bin44 = 1;
-				break;
-
-			case CommandFps:
-                                if (sscanf(argv[i + 1], "%lf", &cfg->fps) != 1)
-					valid = 0;
-				else
-					i++;
-				break;
-
-			case CommandWidth:
-				if (sscanf(argv[i + 1], "%d", &cfg->width) != 1)
-					valid = 0;
-				else
-					i++;
-				break;
-
-			case CommandHeight:
-				if (sscanf(argv[i + 1], "%d", &cfg->height) != 1)
-					valid = 0;
-				else
-					i++;
-				break;
-
-			case CommandLeft:
-				if (sscanf(argv[i + 1], "%d", &cfg->left) != 1)
-					valid = 0;
-				else
-					i++;
-				break;
-
-			case CommandTop:
-				if (sscanf(argv[i + 1], "%d", &cfg->top) != 1)
-					valid = 0;
-				else
-					i++;
-				break;
-
-			case CommandWriteHeader0:
-				len = strlen(argv[i + 1]);
-				cfg->write_header0 = malloc(len + 1);
-				vcos_assert(cfg->write_header0);
-				strncpy(cfg->write_header0, argv[i + 1], len+1);
-				i++;
-				break;
-
-			case CommandWriteHeaderG:
-				len = strlen(argv[i + 1]);
-				cfg->write_headerg = malloc(len + 1);
-				vcos_assert(cfg->write_headerg);
-				strncpy(cfg->write_headerg, argv[i + 1], len+1);
-				i++;
-				break;
-
-			case CommandWriteTimestamps:
-				len = strlen(argv[i + 1]);
-				cfg->write_timestamps = malloc(len + 1);
-				vcos_assert(cfg->write_timestamps);
-				strncpy(cfg->write_timestamps, argv[i + 1], len+1);
-				i++;
-				cfg->ptsa = malloc(sizeof(*cfg->ptsa));
-				cfg->ptso = cfg->ptsa;
-				break;
-
-			case CommandWriteEmpty:
-				cfg->write_empty = 1;
-				break;
-
-			default:
+			else
 				valid = 0;
-				break;
+			break;
+		}
+
+		case CommandWriteHeader:
+			cfg->write_header = 1;
+			break;
+
+		case CommandTimeout: // Time to run for in milliseconds
+			if (sscanf(argv[i + 1], "%u", &cfg->timeout) == 1)
+			{
+				i++;
+			}
+			else
+				valid = 0;
+			break;
+
+		case CommandSaveRate:
+			if (sscanf(argv[i + 1], "%u", &cfg->saverate) == 1)
+			{
+				i++;
+			}
+			else
+				valid = 0;
+			break;
+
+		case CommandBitDepth:
+			if (sscanf(argv[i + 1], "%u", &cfg->bit_depth) == 1)
+			{
+				i++;
+			}
+			else
+				valid = 0;
+			break;
+
+		case CommandCameraNum:
+			if (sscanf(argv[i + 1], "%u", &cfg->camera_num) == 1)
+			{
+				i++;
+				if (cfg->camera_num != 0 && cfg->camera_num != 1)
+				{
+					fprintf(stderr, "Invalid camera number specified (%d)."
+									" It should be 0 or 1.\n",
+							cfg->camera_num);
+					valid = 0;
+				}
+			}
+			else
+				valid = 0;
+			break;
+
+		case CommandExposureus:
+			if (sscanf(argv[i + 1], "%d", &cfg->exposure_us) != 1)
+				valid = 0;
+			else
+				i++;
+			break;
+
+		case CommandI2cBus:
+			if (sscanf(argv[i + 1], "%d", &cfg->i2c_bus) != 1)
+				valid = 0;
+			else
+				i++;
+			break;
+
+		case CommandAwbGains:
+		{
+			double r, b;
+			int args;
+
+			args = sscanf(argv[i + 1], "%lf,%lf", &r, &b);
+
+			if (args != 2 || r > 8.0 || b > 8.0)
+				valid = 0;
+
+			cfg->awb_gains_r = r;
+			cfg->awb_gains_b = b;
+
+			i++;
+			break;
+		}
+
+		case CommandRegs: // register changes
+		{
+			len = strlen(argv[i + 1]);
+			cfg->regs = malloc(len + 1);
+			vcos_assert(cfg->regs);
+			strncpy(cfg->regs, argv[i + 1], len + 1);
+			i++;
+			break;
+		}
+
+		case CommandHinc:
+			if (strlen(argv[i + 1]) != 2 ||
+				sscanf(argv[i + 1], "%x", &cfg->hinc) != 1)
+				valid = 0;
+			else
+				i++;
+			break;
+
+		case CommandVinc:
+			if (strlen(argv[i + 1]) != 2 ||
+				sscanf(argv[i + 1], "%x", &cfg->vinc) != 1)
+				valid = 0;
+			else
+				i++;
+			break;
+
+		case CommandVoinc:
+			if (strlen(argv[i + 1]) != 2 ||
+				sscanf(argv[i + 1], "%x", &cfg->voinc) != 1)
+				valid = 0;
+			else
+				i++;
+			break;
+
+		case CommandHoinc:
+			if (strlen(argv[i + 1]) != 2 ||
+				sscanf(argv[i + 1], "%x", &cfg->hoinc) != 1)
+				valid = 0;
+			else
+				i++;
+			break;
+
+		case CommandBin44:
+			cfg->bin44 = 1;
+			break;
+
+		case CommandFps:
+			if (sscanf(argv[i + 1], "%lf", &cfg->fps) != 1)
+				valid = 0;
+			else
+				i++;
+			break;
+
+		case CommandWidth:
+			if (sscanf(argv[i + 1], "%d", &cfg->width) != 1)
+				valid = 0;
+			else
+				i++;
+			break;
+
+		case CommandHeight:
+			if (sscanf(argv[i + 1], "%d", &cfg->height) != 1)
+				valid = 0;
+			else
+				i++;
+			break;
+
+		case CommandLeft:
+			if (sscanf(argv[i + 1], "%d", &cfg->left) != 1)
+				valid = 0;
+			else
+				i++;
+			break;
+
+		case CommandTop:
+			if (sscanf(argv[i + 1], "%d", &cfg->top) != 1)
+				valid = 0;
+			else
+				i++;
+			break;
+
+		case CommandWriteHeader0:
+			len = strlen(argv[i + 1]);
+			cfg->write_header0 = malloc(len + 1);
+			vcos_assert(cfg->write_header0);
+			strncpy(cfg->write_header0, argv[i + 1], len + 1);
+			i++;
+			break;
+
+		case CommandWriteHeaderG:
+			len = strlen(argv[i + 1]);
+			cfg->write_headerg = malloc(len + 1);
+			vcos_assert(cfg->write_headerg);
+			strncpy(cfg->write_headerg, argv[i + 1], len + 1);
+			i++;
+			break;
+
+		case CommandWriteTimestamps:
+			len = strlen(argv[i + 1]);
+			cfg->write_timestamps = malloc(len + 1);
+			vcos_assert(cfg->write_timestamps);
+			strncpy(cfg->write_timestamps, argv[i + 1], len + 1);
+			i++;
+			cfg->ptsa = malloc(sizeof(*cfg->ptsa));
+			cfg->ptso = cfg->ptsa;
+			break;
+
+		case CommandWriteEmpty:
+			cfg->write_empty = 1;
+			break;
+
+		default:
+			valid = 0;
+			break;
 		}
 	}
 
 	if (!valid)
 	{
-		fprintf(stderr, "Invalid command line option (%s)\n", argv[i-1]);
+		fprintf(stderr, "Invalid command line option (%s)\n", argv[i - 1]);
 		return 1;
 	}
 
@@ -869,16 +876,18 @@ static int parse_cmdline(int argc, char **argv, RASPIRAW_PARAMS_T *cfg)
 //The process first loads the cleaned up dump of the registers
 //than updates the known registers to the proper values
 //based on: http://www.seeedstudio.com/wiki/images/3/3c/Ov5647_full.pdf
-enum operation {
-       EQUAL,  //Set bit to value
-       SET,    //Set bit
-       CLEAR,  //Clear bit
-       XOR     //Xor bit
+enum operation
+{
+	EQUAL, //Set bit to value
+	SET,   //Set bit
+	CLEAR, //Clear bit
+	XOR	   //Xor bit
 };
 
 void modReg(struct mode_def *mode, uint16_t reg, int startBit, int endBit, int value, enum operation op);
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv)
+{
 	RASPIRAW_PARAMS_T cfg = {
 		.mode = 0,
 		.hflip = 0,
@@ -954,144 +963,143 @@ int main(int argc, char** argv) {
 		return -2;
 	}
 
-
 	if (cfg.regs)
 	{
-		int r,b;
-		char *p,*q;
+		int r, b;
+		char *p, *q;
 
-		p=strtok(cfg.regs, ";");
+		p = strtok(cfg.regs, ";");
 		while (p)
 		{
-			vcos_assert(strlen(p)>6);
-			vcos_assert(p[4]==',');
-			vcos_assert(strlen(p)%2);
-			p[4]='\0'; q=p+5;
-			sscanf(p,"%4x",&r);
-			while(*q)
+			vcos_assert(strlen(p) > 6);
+			vcos_assert(p[4] == ',');
+			vcos_assert(strlen(p) % 2);
+			p[4] = '\0';
+			q = p + 5;
+			sscanf(p, "%4x", &r);
+			while (*q)
 			{
 				vcos_assert(isxdigit(q[0]));
 				vcos_assert(isxdigit(q[1]));
 
-				sscanf(q,"%2x",&b);
-				vcos_log_error("%04x: %02x",r,b);
+				sscanf(q, "%2x", &b);
+				vcos_log_error("%04x: %02x", r, b);
 
 				modReg(sensor_mode, r, 0, 7, b, EQUAL);
 
 				++r;
-				q+=2;
+				q += 2;
 			}
-			p=strtok(NULL,";");
+			p = strtok(NULL, ";");
 		}
 	}
 
 	if (cfg.hinc >= 0)
 	{
-                if (!strcmp(sensor->name, "ov5647"))
-		        modReg(sensor_mode, 0x3814, 0, 7, cfg.hinc, EQUAL);
+		if (!strcmp(sensor->name, "ov5647"))
+			modReg(sensor_mode, 0x3814, 0, 7, cfg.hinc, EQUAL);
 	}
 
 	if (cfg.vinc >= 0)
 	{
-                if (!strcmp(sensor->name, "ov5647"))
-		        modReg(sensor_mode, 0x3815, 0, 7, cfg.vinc, EQUAL);
+		if (!strcmp(sensor->name, "ov5647"))
+			modReg(sensor_mode, 0x3815, 0, 7, cfg.vinc, EQUAL);
 	}
 
 	if (cfg.voinc >= 0)
 	{
-                if (!strcmp(sensor->name, "imx219"))
-		        modReg(sensor_mode, 0x0171, 0, 2, cfg.voinc, EQUAL);
+		if (!strcmp(sensor->name, "imx219"))
+			modReg(sensor_mode, 0x0171, 0, 2, cfg.voinc, EQUAL);
 	}
 
 	if (cfg.hoinc >= 0)
 	{
-                if (!strcmp(sensor->name, "imx219"))
-		        modReg(sensor_mode, 0x0170, 0, 2, cfg.hoinc, EQUAL);
+		if (!strcmp(sensor->name, "imx219"))
+			modReg(sensor_mode, 0x0170, 0, 2, cfg.hoinc, EQUAL);
 	}
 
 	if (cfg.fps > 0)
 	{
 		int n = 1000000000 / (sensor_mode->line_time_ns * cfg.fps);
-		modReg(sensor_mode, sensor->vts_reg+0, 0, 7, n>>8, EQUAL);
-		modReg(sensor_mode, sensor->vts_reg+1, 0, 7, n&0xFF, EQUAL);
+		modReg(sensor_mode, sensor->vts_reg + 0, 0, 7, n >> 8, EQUAL);
+		modReg(sensor_mode, sensor->vts_reg + 1, 0, 7, n & 0xFF, EQUAL);
 	}
 
 	if (cfg.width > 0)
 	{
-	        sensor_mode->width = cfg.width;
-	        modReg(sensor_mode, sensor->xos_reg+0, 0, 3, cfg.width >>8, EQUAL);
-	        modReg(sensor_mode, sensor->xos_reg+1, 0, 7, cfg.width &0xFF, EQUAL);
+		sensor_mode->width = cfg.width;
+		modReg(sensor_mode, sensor->xos_reg + 0, 0, 3, cfg.width >> 8, EQUAL);
+		modReg(sensor_mode, sensor->xos_reg + 1, 0, 7, cfg.width & 0xFF, EQUAL);
 	}
 
 	if (cfg.height > 0)
 	{
 		sensor_mode->height = cfg.height;
-		modReg(sensor_mode, sensor->yos_reg+0, 0, 3, cfg.height >>8, EQUAL);
-		modReg(sensor_mode, sensor->yos_reg+1, 0, 7, cfg.height &0xFF, EQUAL);
+		modReg(sensor_mode, sensor->yos_reg + 0, 0, 3, cfg.height >> 8, EQUAL);
+		modReg(sensor_mode, sensor->yos_reg + 1, 0, 7, cfg.height & 0xFF, EQUAL);
 	}
 
 	if (cfg.left > 0)
 	{
-                if (!strcmp(sensor->name, "ov5647"))
-                {
-		        int val = cfg.left * (cfg.mode < 2 ? 1 : 1 << (cfg.mode / 2 - 1));
-		        modReg(sensor_mode, 0x3800, 0, 3, val >>8, EQUAL);
-		        modReg(sensor_mode, 0x3801, 0, 7, val &0xFF, EQUAL);
-                }
+		if (!strcmp(sensor->name, "ov5647"))
+		{
+			int val = cfg.left * (cfg.mode < 2 ? 1 : 1 << (cfg.mode / 2 - 1));
+			modReg(sensor_mode, 0x3800, 0, 3, val >> 8, EQUAL);
+			modReg(sensor_mode, 0x3801, 0, 7, val & 0xFF, EQUAL);
+		}
 	}
 
 	if (cfg.top > 0)
 	{
-                if (!strcmp(sensor->name, "ov5647"))
-                {
-		        int val = cfg.top * (cfg.mode < 2 ? 1 : 1 << (cfg.mode / 2 - 1));
-		        modReg(sensor_mode, 0x3802, 0, 3, val >>8, EQUAL);
-		        modReg(sensor_mode, 0x3803, 0, 7, val &0xFF, EQUAL);
-                }
+		if (!strcmp(sensor->name, "ov5647"))
+		{
+			int val = cfg.top * (cfg.mode < 2 ? 1 : 1 << (cfg.mode / 2 - 1));
+			modReg(sensor_mode, 0x3802, 0, 3, val >> 8, EQUAL);
+			modReg(sensor_mode, 0x3803, 0, 7, val & 0xFF, EQUAL);
+		}
 	}
 
 	if (cfg.bin44 == 1)
 	{
-            if (!strcmp(sensor->name, "imx219"))
-            {
-fprintf(stderr,"start\n");
-		unsigned nwidth, nheight, border, end;
- 		// enabled 4x4 binning
-//		modReg(sensor_mode, 0x0174, 0, 7, 2, EQUAL);
-//		modReg(sensor_mode, 0x0175, 0, 7, 2, EQUAL);
-		
-		// calculate native fov x borders
-//		nwidth = cfg.width*4 * ((cfg.hoinc == 3) ? 2 : 1);
-		nwidth = cfg.width*2 * ((cfg.hoinc == 3) ? 2 : 1);
-		border = (3280 - nwidth)/2;
-		end = 3280 - border - 1;
-		
-		// set x params
-		modReg(sensor_mode, 0x0164, 0, 7, border>>8, EQUAL);
-		modReg(sensor_mode, 0x0165, 0, 7, border&0xff, EQUAL);
-		modReg(sensor_mode, 0x0166, 0, 7, end>>8, EQUAL);
-		modReg(sensor_mode, 0x0167, 0, 7, end&0xff, EQUAL);
-		
-		// calculate native fov y borders 
-//		nheight = cfg.height*4 * ((cfg.voinc == 3) ? 2 : 1);
-		nheight = cfg.height*2 * ((cfg.voinc == 3) ? 2 : 1);
-		border = (2464 - nheight)/2;
-		end = 2464  - border - 1;
-		
-		// set y params
-		modReg(sensor_mode, 0x0168, 0, 7, border>>8, EQUAL);
-		modReg(sensor_mode, 0x0169, 0, 7, border&0xff, EQUAL);
-		modReg(sensor_mode, 0x016a, 0, 7, end>>8, EQUAL);
-		modReg(sensor_mode, 0x016b, 0, 7, end&0xff, EQUAL);
-fprintf(stderr,"end\n");
-            }
+		if (!strcmp(sensor->name, "imx219"))
+		{
+			fprintf(stderr, "start\n");
+			unsigned nwidth, nheight, border, end;
+			// enabled 4x4 binning
+			//		modReg(sensor_mode, 0x0174, 0, 7, 2, EQUAL);
+			//		modReg(sensor_mode, 0x0175, 0, 7, 2, EQUAL);
+
+			// calculate native fov x borders
+			//		nwidth = cfg.width*4 * ((cfg.hoinc == 3) ? 2 : 1);
+			nwidth = cfg.width * 2 * ((cfg.hoinc == 3) ? 2 : 1);
+			border = (3280 - nwidth) / 2;
+			end = 3280 - border - 1;
+
+			// set x params
+			modReg(sensor_mode, 0x0164, 0, 7, border >> 8, EQUAL);
+			modReg(sensor_mode, 0x0165, 0, 7, border & 0xff, EQUAL);
+			modReg(sensor_mode, 0x0166, 0, 7, end >> 8, EQUAL);
+			modReg(sensor_mode, 0x0167, 0, 7, end & 0xff, EQUAL);
+
+			// calculate native fov y borders
+			//		nheight = cfg.height*4 * ((cfg.voinc == 3) ? 2 : 1);
+			nheight = cfg.height * 2 * ((cfg.voinc == 3) ? 2 : 1);
+			border = (2464 - nheight) / 2;
+			end = 2464 - border - 1;
+
+			// set y params
+			modReg(sensor_mode, 0x0168, 0, 7, border >> 8, EQUAL);
+			modReg(sensor_mode, 0x0169, 0, 7, border & 0xff, EQUAL);
+			modReg(sensor_mode, 0x016a, 0, 7, end >> 8, EQUAL);
+			modReg(sensor_mode, 0x016b, 0, 7, end & 0xff, EQUAL);
+			fprintf(stderr, "end\n");
+		}
 	}
 
 	if (cfg.bit_depth == -1)
 	{
 		cfg.bit_depth = sensor_mode->native_bit_depth;
 	}
-
 
 	if (cfg.write_headerg && (cfg.bit_depth != sensor_mode->native_bit_depth))
 	{
@@ -1118,7 +1126,7 @@ fprintf(stderr,"end\n");
 	}
 	vcos_log_error("Encoding %08X", encoding);
 
-	MMAL_COMPONENT_T *rawcam=NULL, *isp=NULL, *render=NULL;
+	MMAL_COMPONENT_T *rawcam = NULL, *isp = NULL, *render = NULL;
 	MMAL_STATUS_T status;
 	MMAL_PORT_T *output = NULL;
 	MMAL_POOL_T *pool = NULL;
@@ -1166,49 +1174,49 @@ fprintf(stderr,"end\n");
 	}
 	else
 	{
-		switch(sensor_mode->native_bit_depth)
+		switch (sensor_mode->native_bit_depth)
 		{
-			case 8:
-				rx_cfg.unpack = MMAL_CAMERA_RX_CONFIG_UNPACK_8;
-				break;
-			case 10:
-				rx_cfg.unpack = MMAL_CAMERA_RX_CONFIG_UNPACK_10;
-				break;
-			case 12:
-				rx_cfg.unpack = MMAL_CAMERA_RX_CONFIG_UNPACK_12;
-				break;
-			case 14:
-				rx_cfg.unpack = MMAL_CAMERA_RX_CONFIG_UNPACK_16;
-				break;
-			case 16:
-				rx_cfg.unpack = MMAL_CAMERA_RX_CONFIG_UNPACK_16;
-				break;
-			default:
-				vcos_log_error("Unknown native bit depth %d", sensor_mode->native_bit_depth);
-				rx_cfg.unpack = MMAL_CAMERA_RX_CONFIG_UNPACK_NONE;
-				break;
+		case 8:
+			rx_cfg.unpack = MMAL_CAMERA_RX_CONFIG_UNPACK_8;
+			break;
+		case 10:
+			rx_cfg.unpack = MMAL_CAMERA_RX_CONFIG_UNPACK_10;
+			break;
+		case 12:
+			rx_cfg.unpack = MMAL_CAMERA_RX_CONFIG_UNPACK_12;
+			break;
+		case 14:
+			rx_cfg.unpack = MMAL_CAMERA_RX_CONFIG_UNPACK_16;
+			break;
+		case 16:
+			rx_cfg.unpack = MMAL_CAMERA_RX_CONFIG_UNPACK_16;
+			break;
+		default:
+			vcos_log_error("Unknown native bit depth %d", sensor_mode->native_bit_depth);
+			rx_cfg.unpack = MMAL_CAMERA_RX_CONFIG_UNPACK_NONE;
+			break;
 		}
-		switch(cfg.bit_depth)
+		switch (cfg.bit_depth)
 		{
-			case 8:
-				rx_cfg.pack = MMAL_CAMERA_RX_CONFIG_PACK_8;
-				break;
-			case 10:
-				rx_cfg.pack = MMAL_CAMERA_RX_CONFIG_PACK_RAW10;
-				break;
-			case 12:
-				rx_cfg.pack = MMAL_CAMERA_RX_CONFIG_PACK_RAW12;
-				break;
-			case 14:
-				rx_cfg.pack = MMAL_CAMERA_RX_CONFIG_PACK_14;
-				break;
-			case 16:
-				rx_cfg.pack = MMAL_CAMERA_RX_CONFIG_PACK_16;
-				break;
-			default:
-				vcos_log_error("Unknown output bit depth %d", cfg.bit_depth);
-				rx_cfg.pack = MMAL_CAMERA_RX_CONFIG_UNPACK_NONE;
-				break;
+		case 8:
+			rx_cfg.pack = MMAL_CAMERA_RX_CONFIG_PACK_8;
+			break;
+		case 10:
+			rx_cfg.pack = MMAL_CAMERA_RX_CONFIG_PACK_RAW10;
+			break;
+		case 12:
+			rx_cfg.pack = MMAL_CAMERA_RX_CONFIG_PACK_RAW12;
+			break;
+		case 14:
+			rx_cfg.pack = MMAL_CAMERA_RX_CONFIG_PACK_14;
+			break;
+		case 16:
+			rx_cfg.pack = MMAL_CAMERA_RX_CONFIG_PACK_16;
+			break;
+		default:
+			vcos_log_error("Unknown output bit depth %d", cfg.bit_depth);
+			rx_cfg.pack = MMAL_CAMERA_RX_CONFIG_UNPACK_NONE;
+			break;
 		}
 	}
 	vcos_log_error("Set pack to %d, unpack to %d", rx_cfg.unpack, rx_cfg.pack);
@@ -1243,9 +1251,9 @@ fprintf(stderr,"end\n");
 	if (sensor_mode->term2)
 		rx_timing.term2 = sensor_mode->term2;
 	vcos_log_error("Timing %u/%u, %u/%u/%u, %u/%u",
-		rx_timing.timing1, rx_timing.timing2,
-		rx_timing.timing3, rx_timing.timing4, rx_timing.timing5,
-		rx_timing.term1,  rx_timing.term2);
+				   rx_timing.timing1, rx_timing.timing2,
+				   rx_timing.timing3, rx_timing.timing4, rx_timing.timing5,
+				   rx_timing.term1, rx_timing.term2);
 	status = mmal_port_parameter_set(output, &rx_timing.hdr);
 	if (status != MMAL_SUCCESS)
 	{
@@ -1253,7 +1261,8 @@ fprintf(stderr,"end\n");
 		goto component_destroy;
 	}
 
-	if (cfg.camera_num != -1) {
+	if (cfg.camera_num != -1)
+	{
 		vcos_log_error("Set camera_num to %d", cfg.camera_num);
 		status = mmal_port_parameter_set_int32(output, MMAL_PARAMETER_CAMERA_NUM, cfg.camera_num);
 		if (status != MMAL_SUCCESS)
@@ -1302,7 +1311,7 @@ fprintf(stderr,"end\n");
 	{
 		if (cfg.write_header || cfg.write_header0)
 		{
-			brcm_header = (struct brcm_raw_header*)malloc(BRCM_RAW_HEADER_LENGTH);
+			brcm_header = (struct brcm_raw_header *)malloc(BRCM_RAW_HEADER_LENGTH);
 			if (brcm_header)
 			{
 				memset(brcm_header, 0, BRCM_RAW_HEADER_LENGTH);
@@ -1313,38 +1322,38 @@ fprintf(stderr,"end\n");
 				//FIXME: Ought to check that the sensor is producing
 				//Bayer rather than just assuming.
 				brcm_header->mode.format = VC_IMAGE_BAYER;
-				switch(sensor_mode->order)
+				switch (sensor_mode->order)
 				{
-					case BAYER_ORDER_BGGR:
-						brcm_header->mode.bayer_order = VC_IMAGE_BAYER_BGGR;
-						break;
-					case BAYER_ORDER_GBRG:
-						brcm_header->mode.bayer_order = VC_IMAGE_BAYER_GBRG;
-						break;
-					case BAYER_ORDER_GRBG:
-						brcm_header->mode.bayer_order = VC_IMAGE_BAYER_GRBG;
-						break;
-					case BAYER_ORDER_RGGB:
-						brcm_header->mode.bayer_order = VC_IMAGE_BAYER_RGGB;
-						break;
+				case BAYER_ORDER_BGGR:
+					brcm_header->mode.bayer_order = VC_IMAGE_BAYER_BGGR;
+					break;
+				case BAYER_ORDER_GBRG:
+					brcm_header->mode.bayer_order = VC_IMAGE_BAYER_GBRG;
+					break;
+				case BAYER_ORDER_GRBG:
+					brcm_header->mode.bayer_order = VC_IMAGE_BAYER_GRBG;
+					break;
+				case BAYER_ORDER_RGGB:
+					brcm_header->mode.bayer_order = VC_IMAGE_BAYER_RGGB;
+					break;
 				}
-				switch(cfg.bit_depth)
+				switch (cfg.bit_depth)
 				{
-					case 8:
-						brcm_header->mode.bayer_format = VC_IMAGE_BAYER_RAW8;
-						break;
-					case 10:
-						brcm_header->mode.bayer_format = VC_IMAGE_BAYER_RAW10;
-						break;
-					case 12:
-						brcm_header->mode.bayer_format = VC_IMAGE_BAYER_RAW12;
-						break;
-					case 14:
-						brcm_header->mode.bayer_format = VC_IMAGE_BAYER_RAW14;
-						break;
-					case 16:
-						brcm_header->mode.bayer_format = VC_IMAGE_BAYER_RAW16;
-						break;
+				case 8:
+					brcm_header->mode.bayer_format = VC_IMAGE_BAYER_RAW8;
+					break;
+				case 10:
+					brcm_header->mode.bayer_format = VC_IMAGE_BAYER_RAW10;
+					break;
+				case 12:
+					brcm_header->mode.bayer_format = VC_IMAGE_BAYER_RAW12;
+					break;
+				case 14:
+					brcm_header->mode.bayer_format = VC_IMAGE_BAYER_RAW14;
+					break;
+				case 16:
+					brcm_header->mode.bayer_format = VC_IMAGE_BAYER_RAW16;
+					break;
 				}
 				if (cfg.write_header0)
 				{
@@ -1394,7 +1403,7 @@ fprintf(stderr,"end\n");
 			goto pool_destroy;
 		}
 		running = 1;
-		for(i = 0; i<output->buffer_num; i++)
+		for (i = 0; i < output->buffer_num; i++)
 		{
 			MMAL_BUFFER_HEADER_T *buffer = mmal_queue_get(pool->queue);
 
@@ -1451,7 +1460,7 @@ fprintf(stderr,"end\n");
 
 		if (cfg.awb_gains_r && cfg.awb_gains_b)
 		{
-			MMAL_PARAMETER_AWB_GAINS_T param = {{MMAL_PARAMETER_CUSTOM_AWB_GAINS,sizeof(param)}, {0,0}, {0,0}};
+			MMAL_PARAMETER_AWB_GAINS_T param = {{MMAL_PARAMETER_CUSTOM_AWB_GAINS, sizeof(param)}, {0, 0}, {0, 0}};
 
 			param.r_gain.num = (unsigned int)(cfg.awb_gains_r * 65536);
 			param.b_gain.num = (unsigned int)(cfg.awb_gains_b * 65536);
@@ -1482,6 +1491,16 @@ fprintf(stderr,"end\n");
 			vcos_log_error("Failed to enable isp->render connection");
 			goto pool_destroy;
 		}
+	}
+
+	//Wait for trigger
+	wiringPiSetup();
+	pinMode(TRIGGERPIN, INPUT); // TODO: make input
+	printf("Waiting for trigger on GPIO %d", TRIGGER_PIN);
+
+	while (digitalRead(TRIGGER_PIN) != HIGH)
+	{
+		//wait for trigger
 	}
 
 	start_camera_streaming(sensor, sensor_mode);
@@ -1549,7 +1568,7 @@ component_destroy:
 		{
 			int64_t old;
 			PTS_NODE_T aux;
-			for(aux = cfg.ptsa; aux != cfg.ptso; aux = aux->nxt)
+			for (aux = cfg.ptsa; aux != cfg.ptso; aux = aux->nxt)
 			{
 				if (aux == cfg.ptsa)
 				{
@@ -1557,7 +1576,7 @@ component_destroy:
 				}
 				else
 				{
-					fprintf(file, "%lld,%d,%lld\n", aux->pts-old, aux->idx, aux->pts);
+					fprintf(file, "%lld,%d,%lld\n", aux->pts - old, aux->idx, aux->pts);
 				}
 				old = aux->pts;
 			}
@@ -1580,27 +1599,29 @@ void modRegBit(struct mode_def *mode, uint16_t reg, int bit, int value, enum ope
 {
 	int i = 0;
 	uint16_t val;
-	while(i < mode->num_regs && mode->regs[i].reg != reg) i++;
-	if (i == mode->num_regs) {
+	while (i < mode->num_regs && mode->regs[i].reg != reg)
+		i++;
+	if (i == mode->num_regs)
+	{
 		vcos_log_error("Reg: %04X not found!\n", reg);
 		return;
 	}
 	val = mode->regs[i].data;
 
-	switch(op)
+	switch (op)
 	{
-		case EQUAL:
-			val = (val | (1 << bit)) & (~( (1 << bit) ^ (value << bit) ));
-			break;
-		case SET:
-			val = val | (1 << bit);
-			break;
-		case CLEAR:
-			val = val & ~(1 << bit);
-			break;
-		case XOR:
-			val = val ^ (value << bit);
-			break;
+	case EQUAL:
+		val = (val | (1 << bit)) & (~((1 << bit) ^ (value << bit)));
+		break;
+	case SET:
+		val = val | (1 << bit);
+		break;
+	case CLEAR:
+		val = val & ~(1 << bit);
+		break;
+	case XOR:
+		val = val ^ (value << bit);
+		break;
 	}
 	mode->regs[i].data = val;
 }
@@ -1608,7 +1629,8 @@ void modRegBit(struct mode_def *mode, uint16_t reg, int bit, int value, enum ope
 void modReg(struct mode_def *mode, uint16_t reg, int startBit, int endBit, int value, enum operation op)
 {
 	int i;
-	for(i = startBit; i <= endBit; i++) {
+	for (i = startBit; i <= endBit; i++)
+	{
 		modRegBit(mode, reg, i, value >> i & 1, op);
 	}
 }
@@ -1631,66 +1653,65 @@ void update_regs(const struct sensor_def *sensor, struct mode_def *mode, int hfl
 
 	if (sensor->exposure_reg && exposure != -1)
 	{
-		if (exposure < 0 || exposure >= (1<<sensor->exposure_reg_num_bits))
+		if (exposure < 0 || exposure >= (1 << sensor->exposure_reg_num_bits))
 		{
 			vcos_log_error("Invalid exposure:%d, exposure range is 0 to %u!\n",
-						exposure, (1<<sensor->exposure_reg_num_bits)-1);
+						   exposure, (1 << sensor->exposure_reg_num_bits) - 1);
 		}
 		else
 		{
 			uint8_t val;
-			int i, j=sensor->exposure_reg_num_bits-1;
-			int num_regs = (sensor->exposure_reg_num_bits+7)>>3;
+			int i, j = sensor->exposure_reg_num_bits - 1;
+			int num_regs = (sensor->exposure_reg_num_bits + 7) >> 3;
 
-			for(i=0; i<num_regs; i++, j-=8)
+			for (i = 0; i < num_regs; i++, j -= 8)
 			{
-				val = (exposure >> (j&~7)) & 0xFF;
-				modReg(mode, sensor->exposure_reg+i, 0, j&0x7, val, EQUAL);
-				vcos_log_error("Set exposure %04X to %02X", sensor->exposure_reg+i, val);
+				val = (exposure >> (j & ~7)) & 0xFF;
+				modReg(mode, sensor->exposure_reg + i, 0, j & 0x7, val, EQUAL);
+				vcos_log_error("Set exposure %04X to %02X", sensor->exposure_reg + i, val);
 			}
 		}
 	}
 	if (sensor->vts_reg && exposure != -1 && exposure >= mode->min_vts)
 	{
-		if (exposure < 0 || exposure >= (1<<sensor->vts_reg_num_bits))
+		if (exposure < 0 || exposure >= (1 << sensor->vts_reg_num_bits))
 		{
 			vcos_log_error("Invalid exposure:%d, vts range is 0 to %u!\n",
-						exposure, (1<<sensor->vts_reg_num_bits)-1);
+						   exposure, (1 << sensor->vts_reg_num_bits) - 1);
 		}
 		else
 		{
 			uint8_t val;
-			int i, j=sensor->vts_reg_num_bits-1;
-			int num_regs = (sensor->vts_reg_num_bits+7)>>3;
+			int i, j = sensor->vts_reg_num_bits - 1;
+			int num_regs = (sensor->vts_reg_num_bits + 7) >> 3;
 
-			for(i = 0; i<num_regs; i++, j-=8)
+			for (i = 0; i < num_regs; i++, j -= 8)
 			{
-				val = (exposure >> (j&~7)) & 0xFF;
-				modReg(mode, sensor->vts_reg+i, 0, j&0x7, val, EQUAL);
-				vcos_log_error("Set vts %04X to %02X", sensor->vts_reg+i, val);
+				val = (exposure >> (j & ~7)) & 0xFF;
+				modReg(mode, sensor->vts_reg + i, 0, j & 0x7, val, EQUAL);
+				vcos_log_error("Set vts %04X to %02X", sensor->vts_reg + i, val);
 			}
 		}
 	}
 	if (sensor->gain_reg && gain != -1)
 	{
-		if (gain < 0 || gain >= (1<<sensor->gain_reg_num_bits))
+		if (gain < 0 || gain >= (1 << sensor->gain_reg_num_bits))
 		{
 			vcos_log_error("Invalid gain:%d, gain range is 0 to %u\n",
-						gain, (1<<sensor->gain_reg_num_bits)-1);
+						   gain, (1 << sensor->gain_reg_num_bits) - 1);
 		}
 		else
 		{
 			uint8_t val;
-			int i, j=sensor->gain_reg_num_bits-1;
-			int num_regs = (sensor->gain_reg_num_bits+7)>>3;
+			int i, j = sensor->gain_reg_num_bits - 1;
+			int num_regs = (sensor->gain_reg_num_bits + 7) >> 3;
 
-			for(i = 0; i<num_regs; i++, j-=8)
+			for (i = 0; i < num_regs; i++, j -= 8)
 			{
-				val = (gain >> (j&~7)) & 0xFF;
-				modReg(mode, sensor->gain_reg+i, 0, j&0x7, val, EQUAL);
-				vcos_log_error("Set gain %04X to %02X", sensor->gain_reg+i, val);
+				val = (gain >> (j & ~7)) & 0xFF;
+				modReg(mode, sensor->gain_reg + i, 0, j & 0x7, val, EQUAL);
+				vcos_log_error("Set gain %04X to %02X", sensor->gain_reg + i, val);
 			}
 		}
 	}
 }
-
