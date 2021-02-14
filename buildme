@@ -1,2 +1,5 @@
-gcc -Wall -lwiringPi -lmmal_core -lmmal_util -lmmal_vc_client -lvcos -lbcm_host -I/opt/vc/include/ -I/opt/vc/include/interface/vctypes/ -L/opt/vc/lib/ -o raspiraw raspiraw.c RaspiCLI.c
+#!/bin/bash
+SCRIPT_DIR=`dirname $(readlink -f $0)` &&
+mkdir -p $SCRIPT_DIR/bin &&
+gcc -Wall -lwiringPi -lmmal_core -lmmal_util -lmmal_vc_client -lvcos -lbcm_host -I/opt/vc/include/ -I/opt/vc/include/interface/vctypes/ -L/opt/vc/lib/ -o $SCRIPT_DIR/bin/raspiraw raspiraw.c RaspiCLI.c
 

@@ -1,4 +1,4 @@
-raspiraw
+bin/*
 *.ppm
 *.raw
 *.jpg
